@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Big Data Studio · Hadoop & Spark Analytics</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Chart.js CDN for interactive graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/>
+          </svg>
+        </div>
+        <div>
+          <h1>YouTube Big Data Studio</h1>
+          <p>Hadoop HDFS Storage + Apache Spark SQL + MLlib Machine Learning</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <span class="badge">
+          <span class="badge-dot"></span>
+          Cluster Active (800 Records)
+        </span>
+
+        <select id="countrySelect" aria-label="Select Country">
+          <option value="ALL">All Regions (Global)</option>
+          <option value="US">🇺🇸 United States (US)</option>
+          <option value="IN">🇮🇳 India (IN)</option>
+          <option value="GB">🇬🇧 Great Britain (GB)</option>
+          <option value="CA">🇨🇦 Canada (CA)</option>
+        </select>
+
+        <button id="themeToggle" class="btn">☀️ Light Mode</button>
+        <button id="runPipelineBtn" class="btn btn-primary">⚡ Run Pipeline</button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="tab-overview">📊 Overview & KPIs</button>
+      <button class="tab-btn" data-tab="tab-rankings">🏆 Video & Channel Rankings</button>
+      <button class="tab-btn" data-tab="tab-timing">⏰ Publish Timing & Velocity</button>
+      <button class="tab-btn" data-tab="tab-mllib">🤖 Machine Learning & Clustering</button>
+      <button class="tab-btn" data-tab="tab-architecture">⚡ Hadoop & Spark Benchmarks</button>
+    </nav>
+
+    <!-- TAB 1: OVERVIEW & KPIS -->
+    <section id="tab-overview" class="tab-content active">
+      <!-- KPI Cards Grid -->
+      <div class="kpi-grid">
+        <div class="kpi-card blue">
+          <div class="kpi-title">Videos Analysed</div>
+          <div class="kpi-val" id="kpiTotalVideos">800</div>
+          <div class="kpi-sub">Across 4 country CSV partitions</div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-title">Total Channel Views</div>
+          <div class="kpi-val" id="kpiTotalViews">45.8M</div>
+          <div class="kpi-sub">Aggregated view impressions</div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-title">Monitored Creators</div>
+          <div class="kpi-val" id="kpiTotalChannels">10</div>
+          <div class="kpi-sub">Top global creator channels</div>
+        </div>
+        <div class="kpi-card purple">
+          <div class="kpi-title">Avg Engagement Rate</div>
+          <div class="kpi-val" id="kpiAvgEngagement">6.55%</div>
+          <div class="kpi-sub">(Likes + Comments) ÷ Views</div>
+        </div>
+      </div>
+
+      <!-- Charts Grid 1 -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Top Channels by Views & Likes</div>
+              <div class="card-subtitle">Aggregated view counts across tracked creators</div>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="channelsChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Category Average Views vs Engagement</div>
+              <div class="card-subtitle">Performance breakdown by YouTube genre</div>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Country Comparison Table Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🌍 Individual Country Statistics & Comparative Benchmark</div>
+            <div class="card-subtitle">Direct statistical comparison across US, India (IN), Great Britain (GB), and Canada (CA)</div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Unique Videos</th>
+                <th>Total Views</th>
+                <th>Avg Views / Video</th>
+                <th>Avg Likes</th>
+                <th>Avg Comments</th>
+                <th>Engagement Rate</th>
+                <th>Velocity (Days to Trend)</th>
+                <th>Drill Down</th>
+              </tr>
+            </thead>
+            <tbody id="countryComparisonTableBody">
+              <!-- Rendered via app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Key Insights Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Key Big Data Insights & Algorithmic Patterns</div>
+        </div>
+        <div class="insight-item">
+          <strong>1. Community Engagement Velocity:</strong> Early likes and comment density serve as the single most dominant statistical signal for total view accumulation (Pearson correlation $r = 0.975$).
+        </div>
+        <div class="insight-item">
+          <strong>2. Category Outliers:</strong> Science & Technology and Music capture the highest absolute view volumes, while Gaming and People & Blogs achieve superior viewer retention with engagement rates exceeding $6.8\%$.
+        </div>
+        <div class="insight-item">
+          <strong>3. Interaction Restrictions:</strong> Videos with comments or ratings disabled experience an average $41\%$ decrease in time spent on the trending list.
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: RANKINGS -->
+    <section id="tab-rankings" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Top 10 Trending Videos Leaderboard</div>
+            <div class="card-subtitle">Highest peak views and engagement across regions</div>
+          </div>
+          <input type="text" id="videoSearch" class="btn" placeholder="🔍 Search video or channel..." style="min-width: 260px;">
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Video Title & Channel</th>
+                <th>Category</th>
+                <th>Views</th>
+                <th>Likes</th>
+                <th>Comments</th>
+                <th>Engagement</th>
+              </tr>
+            </thead>
+            <tbody id="topVideosTableBody">
+              <!-- Rendered via app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: TIMING & HEATMAP -->
+    <section id="tab-timing" class="tab-content">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Upload Volume by Hour of Day (UTC)</div>
+              <div class="card-subtitle">Optimal publishing windows for viral breakout</div>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="timingChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Interaction Correlation Matrix</div>
+              <div class="card-subtitle">Pearson coefficient (r) across engagement metrics</div>
+            </div>
+          </div>
+          <div id="corrMatrixContainer" style="padding-top: 10px;">
+            <!-- Rendered via app.js -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: ML & CLUSTERING -->
+    <section id="tab-mllib" class="tab-content">
+      <!-- Regression Comparison -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Spark MLlib Regression: View Prediction</div>
+              <div class="card-subtitle">Model evaluation on 80/20 train-test split</div>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Model Architecture</th>
+                <th>RMSE</th>
+                <th>R² Score</th>
+                <th>Mean Absolute Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Linear Regression</strong></td>
+                <td>78,741.87</td>
+                <td><strong style="color: var(--accent-emerald);">0.8412</strong></td>
+                <td>27,457.21</td>
+              </tr>
+              <tr>
+                <td><strong>Random Forest Regressor</strong></td>
+                <td>79,964.69</td>
+                <td><strong style="color: var(--accent-emerald);">0.8362</strong></td>
+                <td>27,861.72</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 12px;">
+            Both models account for over 83.6% of view variance ($R^2 > 0.83$), confirming strong predictive signal from early engagement features.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Gini Feature Importances</div>
+              <div class="card-subtitle">Relative contribution to video view count</div>
+            </div>
+          </div>
+          <div id="featureImportancesList">
+            <!-- Rendered via app.js -->
+          </div>
+        </div>
+      </div>
+
+      <!-- K-Means Clusters Grid -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Spark MLlib K-Means: Behavioral Video Clusters (k=4)</div>
+            <div class="card-subtitle">Unsupervised segmentation of video interaction profiles</div>
+          </div>
+        </div>
+        <div class="kpi-grid" id="clusterCardsGrid">
+          <!-- Rendered via app.js -->
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: ARCHITECTURE & BENCHMARKS -->
+    <section id="tab-architecture" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Enterprise Big Data Architecture Pipeline</div>
+        </div>
+        <div class="arch-flow">
+          <div class="arch-node">
+            <strong>1. Ingestion</strong>
+            <span>Kaggle / YouTube API</span>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <strong>2. HDFS Storage</strong>
+            <span>/youtube/raw/*.csv</span>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <strong>3. Spark Engine</strong>
+            <span>Clean + Parquet Partition</span>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <strong>4. Analytics & ML</strong>
+            <span>Spark SQL & MLlib</span>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node">
+            <strong>5. Presentation</strong>
+            <span>Charts & Web UI</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Benchmark Cards -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Storage & I/O: CSV vs Apache Parquet</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Raw CSV Size</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 100%; background: #ef4444;"></div></div>
+            <div class="bar-val">0.33 MB</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Parquet (Snappy)</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 23%; background: #10b981;"></div></div>
+            <div class="bar-val">0.08 MB</div>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--accent-emerald); font-weight: 600; margin-top: 10px;">
+            ✓ 4.35x Storage Reduction | 6.93x Query Scan Speedup
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">In-Memory Caching & Partition Pruning</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Uncached Query</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 100%; background: #f59e0b;"></div></div>
+            <div class="bar-val">0.495s</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Cached (.cache())</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 15%; background: #3b82f6;"></div></div>
+            <div class="bar-val">0.076s</div>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--accent-blue); font-weight: 600; margin-top: 10px;">
+            ✓ 6.51x In-Memory Caching Speedup | 7.64x Partition Pruning Speedup
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer style="text-align: center; margin-top: 40px; color: var(--text-muted); font-size: 0.82rem;">
+      <p>YouTube Statistics Big Data Studio · Built with Hadoop HDFS, Apache Spark 3.5, PySpark, & Python</p>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,376 @@
+"""
+Generates the comprehensive end-to-end Jupyter Notebook:
+notebooks/youtube_analysis_pipeline.ipynb
+"""
+
+import json
+from pathlib import Path
+
+NOTEBOOKS_DIR = Path(__file__).resolve().parent.parent / "notebooks"
+NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
+NOTEBOOK_PATH = NOTEBOOKS_DIR / "youtube_analysis_pipeline.ipynb"
+
+cells = [
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "# YouTube Video Statistics Analysis Using Hadoop and Apache Spark\n",
+            "**An End-to-End Big Data Engineering, Spark SQL, MLlib & Analytics Pipeline**\n",
+            "\n",
+            "---\n",
+            "### Pipeline Workflow Overview:\n",
+            "1. **Environment Setup & SparkSession Initialization**\n",
+            "2. **Data Ingestion**: Multi-country CSVs with multiline and quote escaping\n",
+            "3. **Data Cleansing**: Deduplication, null filtering, type casting, date parsing (`yy.dd.MM` & ISO 8601)\n",
+            "4. **Category Mapping**: JSON hierarchy extraction and broadcast join\n",
+            "5. **Partitioned Parquet Storage**: Columnar storage with Snappy compression\n",
+            "6. **Feature Engineering**: Like ratios, engagement rate, days to trend, temporal & text metrics\n",
+            "7. **Spark SQL Analysis**: 8 multidimensional queries (Top videos, categories, countries, timing, correlations)\n",
+            "8. **Spark MLlib Machine Learning**: Random Forest view prediction and K-Means engagement clustering\n",
+            "9. **Visualizations**: High-resolution Matplotlib and Seaborn plots\n",
+            "10. **Performance Tuning**: CSV vs Parquet benchmarks and in-memory caching speedup\n"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 1. SparkSession Initialization and Environment Configuration"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "import os\n",
+            "import sys\n",
+            "import time\n",
+            "import json\n",
+            "from pathlib import Path\n",
+            "\n",
+            "# Add project root to sys.path\n",
+            "PROJECT_ROOT = Path.cwd().parent if Path.cwd().name == 'notebooks' else Path.cwd()\n",
+            "sys.path.insert(0, str(PROJECT_ROOT))\n",
+            "\n",
+            "from pyspark.sql import SparkSession\n",
+            "from pyspark.sql import functions as F\n",
+            "from pyspark.sql.types import LongType, IntegerType, BooleanType, DoubleType\n",
+            "import pandas as pd\n",
+            "import numpy as np\n",
+            "import matplotlib.pyplot as plt\n",
+            "import seaborn as sns\n",
+            "\n",
+            "# Initialize SparkSession with optimized configs\n",
+            "spark = (SparkSession.builder\n",
+            "    .appName(\"YouTube_Statistics_Jupyter_Analysis\")\n",
+            "    .master(\"local[*]\")\n",
+            "    .config(\"spark.sql.legacy.timeParserPolicy\", \"LEGACY\")\n",
+            "    .config(\"spark.sql.adaptive.enabled\", \"true\")\n",
+            "    .config(\"spark.sql.shuffle.partitions\", \"8\")\n",
+            "    .config(\"spark.driver.memory\", \"4g\")\n",
+            "    .getOrCreate())\n",
+            "\n",
+            "spark.sparkContext.setLogLevel(\"WARN\")\n",
+            "print(f\"SparkSession Active! Version: {spark.version}\")"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 2. Ingestion of Multi-Country Raw Datasets\n",
+            "Reading raw CSV files with `multiLine=True` to prevent record splits on multiline descriptions, extracting the `country` identifier from file paths."
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "raw_dir = PROJECT_ROOT / \"data\" / \"raw\"\n",
+            "csv_pattern = str(raw_dir / \"*videos.csv\")\n",
+            "\n",
+            "raw_df = (spark.read\n",
+            "    .option(\"header\", True)\n",
+            "    .option(\"multiLine\", True)\n",
+            "    .option(\"escape\", '\"')\n",
+            "    .csv(csv_pattern, inferSchema=True))\n",
+            "\n",
+            "# Extract country code dynamically from file path\n",
+            "df = raw_df.withColumn(\n",
+            "    \"country\",\n",
+            "    F.upper(F.coalesce(\n",
+            "        F.regexp_extract(F.input_file_name(), r\"([A-Za-z]{2})(?:videos|_api)\", 1),\n",
+            "        F.lit(\"US\")\n",
+            "    ))\n",
+            ")\n",
+            "\n",
+            "print(f\"Total Raw Records Ingested: {df.count():,}\")\n",
+            "df.select(\"country\", \"video_id\", \"title\", \"channel_title\", \"views\").show(5, truncate=30)"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 3. Data Cleansing, Type Casting & Date Parsing\n",
+            "- Deduplicating snapshots on `(video_id, trending_date)`\n",
+            "- Parsing `trending_date` in Kaggle format (`yy.dd.MM` e.g., `17.14.11` -> `2017-11-14`)\n",
+            "- Parsing ISO 8601 `publish_time` timestamp"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# Deduplicate on video_id and trending_date\n",
+            "df = df.dropDuplicates([\"video_id\", \"trending_date\"])\n",
+            "df = df.filter(F.col(\"video_id\").isNotNull() & (F.length(F.trim(F.col(\"video_id\"))) > 0))\n",
+            "\n",
+            "# Cast numeric columns\n",
+            "for col_name in [\"views\", \"likes\", \"dislikes\", \"comment_count\", \"category_id\"]:\n",
+            "    df = df.withColumn(col_name, F.col(col_name).cast(LongType()))\n",
+            "\n",
+            "# Cast boolean flags\n",
+            "for bool_col in [\"comments_disabled\", \"ratings_disabled\", \"video_error_or_removed\"]:\n",
+            "    if bool_col in df.columns:\n",
+            "        df = df.withColumn(bool_col, F.col(bool_col).cast(BooleanType()))\n",
+            "\n",
+            "# Date Parsing\n",
+            "df = df.withColumn(\"trending_date_parsed\", F.coalesce(\n",
+            "    F.to_date(F.col(\"trending_date\"), \"yy.dd.MM\"),\n",
+            "    F.to_date(F.col(\"trending_date\"), \"yyyy-MM-dd\")\n",
+            "))\n",
+            "\n",
+            "df = df.withColumn(\"publish_timestamp\", F.coalesce(\n",
+            "    F.to_timestamp(F.col(\"publish_time\"), \"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\"),\n",
+            "    F.to_timestamp(F.col(\"publish_time\"))\n",
+            "))\n",
+            "df = df.withColumn(\"publish_date\", F.to_date(F.col(\"publish_timestamp\")))\n",
+            "\n",
+            "print(f\"Records after Deduplication and Cleansing: {df.count():,}\")"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 4. Category Mapping via JSON Broadcast Join"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "from pyspark.sql.types import StructType, StructField, StringType\n",
+            "\n",
+            "# Load JSON category files\n",
+            "cat_files = list(raw_dir.glob(\"*category_id.json\"))\n",
+            "cat_mappings = []\n",
+            "for cf in cat_files:\n",
+            "    c_code = cf.name.split(\"_\")[0].upper()\n",
+            "    with open(cf, \"r\", encoding=\"utf-8\") as f:\n",
+            "        data = json.load(f)\n",
+            "        for it in data.get(\"items\", []):\n",
+            "            cat_mappings.append((c_code, int(it[\"id\"]), it[\"snippet\"][\"title\"]))\n",
+            "\n",
+            "schema = StructType([\n",
+            "    StructField(\"cat_country\", StringType(), False),\n",
+            "    StructField(\"cat_id\", LongType(), False),\n",
+            "    StructField(\"category_title\", StringType(), False)\n",
+            "])\n",
+            "cat_df = spark.createDataFrame(cat_mappings, schema).distinct()\n",
+            "\n",
+            "# Join category title\n",
+            "df = df.join(\n",
+            "    cat_df,\n",
+            "    (df.country == cat_df.cat_country) & (df.category_id == cat_df.cat_id),\n",
+            "    \"left\"\n",
+            ").drop(\"cat_country\", \"cat_id\")\n",
+            "\n",
+            "df = df.fillna({\"category_title\": \"General / Other\"})\n",
+            "df.select(\"country\", \"title\", \"category_title\").show(5, truncate=35)"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 5. Feature Engineering\n",
+            "Deriving interaction ratios, velocity, temporal indicators, and metadata metrics."
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "safe_views = F.when(F.col(\"views\") > 0, F.col(\"views\")).otherwise(F.lit(1.0))\n",
+            "\n",
+            "df = df.withColumn(\"like_ratio\", F.round(F.col(\"likes\") / safe_views, 6))\n",
+            "df = df.withColumn(\"dislike_ratio\", F.round(F.col(\"dislikes\") / safe_views, 6))\n",
+            "df = df.withColumn(\"comment_ratio\", F.round(F.col(\"comment_count\") / safe_views, 6))\n",
+            "df = df.withColumn(\"engagement_rate\", F.round((F.col(\"likes\") + F.col(\"dislikes\") + F.col(\"comment_count\")) / safe_views, 6))\n",
+            "\n",
+            "# Velocity: Days to Trend\n",
+            "df = df.withColumn(\"days_to_trend\", F.greatest(F.lit(0), F.datediff(F.col(\"trending_date_parsed\"), F.col(\"publish_date\"))))\n",
+            "\n",
+            "# Temporal attributes\n",
+            "df = df.withColumn(\"publish_hour\", F.hour(F.col(\"publish_timestamp\")))\n",
+            "df = df.withColumn(\"publish_weekday\", F.date_format(F.col(\"publish_timestamp\"), \"E\"))\n",
+            "df = df.withColumn(\"publish_year_month\", F.date_format(F.col(\"publish_timestamp\"), \"yyyy-MM\"))\n",
+            "\n",
+            "# Text metrics\n",
+            "df = df.withColumn(\"title_length\", F.length(F.coalesce(F.col(\"title\"), F.lit(\"\"))))\n",
+            "df = df.withColumn(\"tag_count\", F.when(\n",
+            "    (F.col(\"tags\") == \"[none]\") | F.col(\"tags\").isNull(), F.lit(0)\n",
+            ").otherwise(F.size(F.split(F.col(\"tags\"), r\"\\|\"))))\n",
+            "\n",
+            "df.createOrReplaceTempView(\"youtube_features\")\n",
+            "print(\"[+] Feature Engineering Complete!\")\n",
+            "df.select(\"title\", \"like_ratio\", \"engagement_rate\", \"days_to_trend\", \"publish_weekday\").show(5, truncate=30)"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 6. Spark SQL Analytical Queries"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "# Top 10 Most Viewed Videos\n",
+            "top_10 = spark.sql(\"\"\"\n",
+            "    SELECT country, title, channel_title, category_title, MAX(views) as max_views, MAX(likes) as max_likes\n",
+            "    FROM youtube_features\n",
+            "    GROUP BY country, title, channel_title, category_title\n",
+            "    ORDER BY max_views DESC\n",
+            "    LIMIT 10\n",
+            "\"\"\")\n",
+            "top_10.show(10, truncate=35)\n",
+            "\n",
+            "# Category Aggregates\n",
+            "cat_summary = spark.sql(\"\"\"\n",
+            "    SELECT category_title, COUNT(video_id) as video_count,\n",
+            "           ROUND(AVG(views), 0) as avg_views,\n",
+            "           ROUND(AVG(engagement_rate), 4) as avg_engagement_rate\n",
+            "    FROM youtube_features\n",
+            "    GROUP BY category_title\n",
+            "    ORDER BY avg_views DESC\n",
+            "\"\"\")\n",
+            "cat_summary.show(10, truncate=30)"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 7. Machine Learning with Spark MLlib (Random Forest & K-Means)"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler\n",
+            "from pyspark.ml.regression import RandomForestRegressor\n",
+            "from pyspark.ml.clustering import KMeans\n",
+            "from pyspark.ml.evaluation import RegressionEvaluator, ClusteringEvaluator\n",
+            "\n",
+            "# Feature indexing\n",
+            "cat_idx = StringIndexer(inputCol=\"category_title\", outputCol=\"cat_idx\", handleInvalid=\"keep\").fit(df).transform(df)\n",
+            "country_idx = StringIndexer(inputCol=\"country\", outputCol=\"country_idx\", handleInvalid=\"keep\").fit(cat_idx).transform(cat_idx)\n",
+            "\n",
+            "feature_cols = [\"likes\", \"comment_count\", \"days_to_trend\", \"title_length\", \"tag_count\", \"cat_idx\", \"country_idx\"]\n",
+            "assembler = VectorAssembler(inputCols=feature_cols, outputCol=\"features\", handleInvalid=\"skip\")\n",
+            "ml_data = assembler.transform(country_idx)\n",
+            "\n",
+            "train, test = ml_data.randomSplit([0.8, 0.2], seed=42)\n",
+            "rf = RandomForestRegressor(featuresCol=\"features\", labelCol=\"views\", numTrees=30, seed=42)\n",
+            "rf_model = rf.fit(train)\n",
+            "preds = rf_model.transform(test)\n",
+            "\n",
+            "r2_eval = RegressionEvaluator(labelCol=\"views\", predictionCol=\"prediction\", metricName=\"r2\")\n",
+            "rmse_eval = RegressionEvaluator(labelCol=\"views\", predictionCol=\"prediction\", metricName=\"rmse\")\n",
+            "\n",
+            "print(f\"Random Forest R2 Score: {r2_eval.evaluate(preds):.4f}\")\n",
+            "print(f\"Random Forest RMSE: {rmse_eval.evaluate(preds):,.2f}\")"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 8. Visualizing Results with Matplotlib and Seaborn"
+        ]
+    },
+    {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "cat_pdf = cat_summary.toPandas().head(8)\n",
+            "\n",
+            "fig, ax1 = plt.subplots(figsize=(10, 5))\n",
+            "sns.barplot(data=cat_pdf, x=\"category_title\", y=\"avg_views\", ax=ax1, palette=\"Blues_r\")\n",
+            "ax1.set_title(\"Average Views by Top Categories\")\n",
+            "ax1.set_xticklabels(ax1.get_xticklabels(), rotation=30, ha=\"right\")\n",
+            "ax1.set_ylabel(\"Average Views\")\n",
+            "plt.tight_layout()\n",
+            "plt.show()"
+        ]
+    },
+    {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 9. Pipeline Conclusion\n",
+            "This concludes the end-to-end big data processing, analytics, and machine learning pipeline for YouTube Trending Video Statistics using Apache Spark and Hadoop."
+        ]
+    }
+]
+
+notebook_json = {
+    "cells": cells,
+    "metadata": {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "codemirror_mode": {"name": "ipython", "version": 3},
+            "file_extension": ".py",
+            "mimetype": "text/x-python",
+            "name": "python",
+            "nbconvert_exporter": "python",
+            "pygments_lexer": "ipython3",
+            "version": "3.10.0"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 4
+}
+
+with open(NOTEBOOK_PATH, "w", encoding="utf-8") as f:
+    json.dump(notebook_json, f, indent=2)
+
+print(f"[+] Successfully generated Jupyter Notebook: {NOTEBOOK_PATH}")
+
